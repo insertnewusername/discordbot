@@ -89,8 +89,33 @@ async def on_ready():
 @bot.event
 async def on_message(message):
     global last_seen_time
+
+    # Ignore messages sent by the bot itself
+    if message.author == bot.user:
+        return
+
+    # Check for target user activity
     if message.author.id == TARGET_USER_ID:
         last_seen_time = datetime.now(timezone.utc)
+
+    # Forward direct messages sent to the bot to your DM
+    if isinstance(message.channel, discord.DMChannel):
+        if message.author.id != AUTHORIZED_ADMIN_ID:
+            try:
+                admin_user = await bot.fetch_user(AUTHORIZED_ADMIN_ID)
+                formatted_time = message.created_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+                
+                dm_notification = (
+                    f"📩 **New Direct Message Received**\n"
+                    f"👤 **From:** {message.author.name} (ID: `{message.author.id}`)\n"
+                    f"🕒 **Time:** {formatted_time}\n"
+                    f"💬 **Message:** {message.content}"
+                )
+                
+                await admin_user.send(dm_notification)
+            except Exception as e:
+                print(f"Failed to forward DM to admin: {e}")
+
     await bot.process_commands(message)
 
 @bot.event
