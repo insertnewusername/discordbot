@@ -42,15 +42,22 @@ async def on_presence_update(before, after):
 
     if prev_status == "offline" and curr_status != "offline":
         for guild in bot.guilds:
-            channel = guild.system_channel
+            # 1. Look specifically for a text channel named "chat"
+            channel = discord.utils.get(guild.text_channels, name="chat")
             
+            # 2. Fallback to system channel if #chat doesn't exist
+            if channel is None:
+                channel = guild.system_channel
+            
+            # 3. Fallback to the first available text channel
             if channel is None or not channel.permissions_for(guild.me).send_messages:
                 for c in guild.text_channels:
                     if c.permissions_for(guild.me).send_messages:
                         channel = c
                         break
             
-            if channel:
+            # Send announcement if a valid channel was found
+            if channel and channel.permissions_for(guild.me).send_messages:
                 await channel.send("# THE PRESIDENT HAS RETURNED, EVERYONE ACT BUSY #")
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
