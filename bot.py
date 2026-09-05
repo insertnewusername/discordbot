@@ -4,7 +4,7 @@ from flask import Flask
 import discord
 from discord.ext import commands
 
-# 1. Create a minimal Web Server to keep Render Happy
+# 1. Web Server to Keep Render Happy
 app = Flask(__name__)
 
 @app.route('/')
@@ -15,7 +15,6 @@ def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-# Start Flask in a background thread
 threading.Thread(target=run_flask, daemon=True).start()
 
 # 2. Discord Bot Setup
@@ -25,19 +24,27 @@ intents = discord.Intents.default()
 intents.presences = True
 intents.members = True
 intents.guilds = True
-intents.message_content = True  # Required for command reading
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
+    # Sync slash commands with Discord when bot logs in
+    try:
+        synced = await bot.tree.sync()
+        print(f"Synced {len(synced)} slash command(s).")
+    except Exception as e:
+        print(f"Failed to sync slash commands: {e}")
+        
     print(f"Logged in as {bot.user.name}")
 
-# Ping command to test responsiveness
-@bot.command()
-async def ping(ctx):
-    await ctx.send("Pong! The bot is online and working.")
+# 3. Slash Command (/ping)
+@bot.tree.command(name="ping", description="Check if the bot is online")
+async def ping(interaction: discord.Interaction):
+    latency = round(bot.latency * 1000)
+    await interaction.response.send_message(f"Pong! 🏓 The bot is live! ({latency}ms)")
 
+# 4. Presence Listener
 @bot.event
 async def on_presence_update(before, after):
     if after.id != TARGET_USER_ID:
@@ -48,21 +55,17 @@ async def on_presence_update(before, after):
 
     if prev_status == "offline" and curr_status != "offline":
         for guild in bot.guilds:
-            # 1. Look specifically for a text channel named "chat"
             channel = discord.utils.get(guild.text_channels, name="chat")
             
-            # 2. Fallback to system channel if #chat doesn't exist
             if channel is None:
                 channel = guild.system_channel
             
-            # 3. Fallback to the first available text channel
             if channel is None or not channel.permissions_for(guild.me).send_messages:
                 for c in guild.text_channels:
                     if c.permissions_for(guild.me).send_messages:
                         channel = c
                         break
             
-            # Send announcement if a valid channel was found
             if channel and channel.permissions_for(guild.me).send_messages:
                 await channel.send("# THE PRESIDENT HAS RETURNED, EVERYONE ACT BUSY #")
 
