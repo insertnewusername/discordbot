@@ -7,13 +7,16 @@ from flask import Flask
 import aiohttp
 import discord
 from discord.ext import commands
+import asyncpg
 
-# 1. Web Server to Keep Render Happy
+# ==============================================================================
+# 1. WEB SERVER TO KEEP HOSTING HEALTHY (e.g., Render/Heroku)
+# ==============================================================================
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot is running!"
+    return "Bot is active and running!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -21,12 +24,17 @@ def run_flask():
 
 threading.Thread(target=run_flask, daemon=True).start()
 
-# 2. Discord Bot Setup & Helpers
+# ==============================================================================
+# 2. DISCORD BOT SETUP & HELPERS
+# ==============================================================================
 TARGET_USER_ID = 1302824809167589386
-last_seen_time = None  # Tracks when the target user went offline/online
+AUTHORIZED_ADMIN_ID = 1013741236261232720
+DATABASE_URL = os.getenv("DATABASE_URL")  # Set this in your environment variables if using PostgreSQL
+
+last_seen_time = None  # Tracks when target user was active
 
 def parse_time(time_str: str) -> timedelta:
-    """Parses strings like 10m, 2h, 1d into timedelta objects."""
+    """Parses standard duration strings like 10m, 2h, 1d into timedelta objects."""
     match = re.match(r"^(\d+)([smhd])$", time_str.lower())
     if not match:
         return None
@@ -34,35 +42,50 @@ def parse_time(time_str: str) -> timedelta:
     units = {'s': 'seconds', 'm': 'minutes', 'h': 'hours', 'd': 'days'}
     return timedelta(**{units[unit]: amount})
 
+class CustomBot(commands.Bot):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.db_pool = None
+
+    async def setup_hook(self):
+        # Initialize PostgreSQL Database Pool if configured
+        if DATABASE_URL:
+            try:
+                self.db_pool = await asyncpg.create_pool(DATABASE_URL)
+                print("Database pool connected successfully.")
+            except Exception as e:
+                print(f"Failed to connect to database: {e}")
+
+        # Sync Application Slash Commands
+        try:
+            synced = await self.tree.sync()
+            print(f"Synced {len(synced)} slash command(s).")
+        except Exception as e:
+            print(f"Failed to sync slash commands: {e}")
+
 intents = discord.Intents.default()
 intents.presences = True
 intents.members = True
 intents.guilds = True
 intents.message_content = True
 
-bot = commands.Bot(
-    command_prefix=".", 
-    intents=intents, 
+bot = CustomBot(
+    command_prefix=".",
+    intents=intents,
     status=discord.Status.online
 )
 
 @bot.event
 async def on_ready():
-    await asyncio.sleep(2)
     await bot.change_presence(
         status=discord.Status.online,
         activity=discord.Activity(type=discord.ActivityType.watching, name="for the President")
     )
+    print(f"Logged in as {bot.user.name} (ID: {bot.user.id})")
 
-    try:
-        synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} slash command(s).")
-    except Exception as e:
-        print(f"Failed to sync slash commands: {e}")
-        
-    print(f"Logged in as {bot.user.name}")
-
-# 3. Message Activity Listener
+# ==============================================================================
+# 3. MESSAGE & PRESENCE LISTENERS
+# ==============================================================================
 @bot.event
 async def on_message(message):
     global last_seen_time
@@ -70,17 +93,45 @@ async def on_message(message):
         last_seen_time = datetime.now(timezone.utc)
     await bot.process_commands(message)
 
-# 4. Utility & API Commands
-@bot.tree.command(name="ping", description="Check if the bot is online")
+@bot.event
+async def on_presence_update(before, after):
+    global last_seen_time
+
+    if after.id != TARGET_USER_ID:
+        return
+
+    prev_status = str(before.status) if before else "offline"
+    curr_status = str(after.status)
+
+    if curr_status != "offline":
+        last_seen_time = datetime.now(timezone.utc)
+
+    if prev_status == "offline" and curr_status != "offline":
+        for guild in bot.guilds:
+            channel = discord.utils.get(guild.text_channels, name="chat")
+            if channel is None:
+                channel = guild.system_channel
+            if channel is None or not channel.permissions_for(guild.me).send_messages:
+                for c in guild.text_channels:
+                    if c.permissions_for(guild.me).send_messages:
+                        channel = c
+                        break
+            if channel and channel.permissions_for(guild.me).send_messages:
+                await channel.send("# THE PRESIDENT HAS RETURNED, EVERYONE ACT BUSY #")
+
+# ==============================================================================
+# 4. UTILITY & INFORMATIONAL COMMANDS
+# ==============================================================================
+@bot.tree.command(name="ping", description="Check if the bot is online and its latency")
 async def ping(interaction: discord.Interaction):
     latency = round(bot.latency * 1000)
     await interaction.response.send_message(f"Pong! 🏓 The bot is live! ({latency}ms)")
 
-@bot.tree.command(name="summon", description="Summon the President")
+@bot.tree.command(name="summon", description="Summon the designated target user")
 async def wake(interaction: discord.Interaction):
     await interaction.response.send_message(f"🚨 <@{TARGET_USER_ID}> You have been summoned!")
 
-@bot.tree.command(name="lastseen", description="Check when the target user was last seen")
+@bot.tree.command(name="lastseen", description="Check when the target user was last active")
 async def lastseen(interaction: discord.Interaction):
     global last_seen_time
     member = interaction.guild.get_member(TARGET_USER_ID) if interaction.guild else None
@@ -125,24 +176,22 @@ async def fact(interaction: discord.Interaction):
 async def help_command(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🤖 Bot Commands",
-        description="Available commands (supports both `/` and `.` prefix):",
+        description="Available commands (supports both `/` slash and `.` prefix commands):",
         color=discord.Color.green()
     )
     embed.add_field(name="General", value="`/ping`, `/summon`, `/lastseen`, `/joke`, `/fact`", inline=False)
     embed.add_field(name="Moderation", value="`/kick <user> [reason]`\n`/ban <user> [reason]`\n`/timeout <user> <duration> [reason]`\n`/tempban <user> <duration> [reason]`", inline=False)
     await interaction.response.send_message(embed=embed)
 
-AUTHORIZED_ADMIN_ID = 1013741236261232720
-
-# Send a message to any channel via DM (Owner Only)
+# ==============================================================================
+# 5. ADMIN UTILITY COMMANDS (PREFIX)
+# ==============================================================================
 @bot.command(name="saychannel")
 async def dm_say_channel(ctx, channel_id: int, *, message: str):
-    # Security Check: Restrict to your user ID
     if ctx.author.id != AUTHORIZED_ADMIN_ID:
         await ctx.send("❌ You are not authorized to use this command.")
         return
 
-    # Ensure command is run in DMs
     if not isinstance(ctx.channel, discord.DMChannel):
         await ctx.send("This command can only be used in DMs.")
         return
@@ -163,11 +212,8 @@ async def dm_say_channel(ctx, channel_id: int, *, message: str):
     except Exception as e:
         await ctx.send(f"❌ Error: {e}")
 
-
-# Send a direct message to any user via DM (Owner Only)
 @bot.command(name="sayuser")
 async def dm_say_user(ctx, user_id: int, *, message: str):
-    # Security Check: Restrict to your user ID
     if ctx.author.id != AUTHORIZED_ADMIN_ID:
         await ctx.send("❌ You are not authorized to use this command.")
         return
@@ -184,9 +230,12 @@ async def dm_say_user(ctx, user_id: int, *, message: str):
         await ctx.send("❌ Cannot DM that user. Their DMs might be closed or they don't share a server with me.")
     except Exception as e:
         await ctx.send(f"❌ Error: {e}")
-# 5. Moderation Commands (Slash & Prefix)
 
-# --- Kick ---
+# ==============================================================================
+# 6. MODERATION COMMANDS
+# ==============================================================================
+
+# --- KICK ---
 @bot.tree.command(name="kick", description="Kick a member from the server")
 @discord.app_commands.checks.has_permissions(kick_members=True)
 async def slash_kick(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
@@ -205,7 +254,7 @@ async def prefix_kick(ctx, member: discord.Member, *, reason: str = "No reason p
     except Exception as e:
         await ctx.send(f"❌ Failed to kick user: {e}")
 
-# --- Ban ---
+# --- BAN ---
 @bot.tree.command(name="ban", description="Ban a member from the server")
 @discord.app_commands.checks.has_permissions(ban_members=True)
 async def slash_ban(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
@@ -224,7 +273,7 @@ async def prefix_ban(ctx, member: discord.Member, *, reason: str = "No reason pr
     except Exception as e:
         await ctx.send(f"❌ Failed to ban user: {e}")
 
-# --- Timeout ---
+# --- TIMEOUT ---
 @bot.tree.command(name="timeout", description="Timeout a member (e.g., 10m, 1h, 1d)")
 @discord.app_commands.checks.has_permissions(moderate_members=True)
 async def slash_timeout(interaction: discord.Interaction, member: discord.Member, duration: str, reason: str = "No reason provided"):
@@ -251,7 +300,7 @@ async def prefix_timeout(ctx, member: discord.Member, duration: str, *, reason: 
     except Exception as e:
         await ctx.send(f"❌ Failed to timeout user: {e}")
 
-# --- Tempban ---
+# --- TEMPBAN ---
 @bot.tree.command(name="tempban", description="Temporarily ban a member (e.g., 1d, 7d)")
 @discord.app_commands.checks.has_permissions(ban_members=True)
 async def slash_tempban(interaction: discord.Interaction, member: discord.Member, duration: str, reason: str = "No reason provided"):
@@ -282,33 +331,11 @@ async def prefix_tempban(ctx, member: discord.Member, duration: str, *, reason: 
     except Exception as e:
         await ctx.send(f"❌ Tempban error: {e}")
 
-# 6. Presence Listener
-@bot.event
-async def on_presence_update(before, after):
-    global last_seen_time
-
-    if after.id != TARGET_USER_ID:
-        return
-
-    prev_status = str(before.status) if before else "offline"
-    curr_status = str(after.status)
-
-    if curr_status != "offline":
-        last_seen_time = datetime.now(timezone.utc)
-
-    if prev_status == "offline" and curr_status != "offline":
-        for guild in bot.guilds:
-            channel = discord.utils.get(guild.text_channels, name="chat")
-            if channel is None:
-                channel = guild.system_channel
-            if channel is None or not channel.permissions_for(guild.me).send_messages:
-                for c in guild.text_channels:
-                    if c.permissions_for(guild.me).send_messages:
-                        channel = c
-                        break
-            if channel and channel.permissions_for(guild.me).send_messages:
-                await channel.send("# THE PRESIDENT HAS RETURNED, EVERYONE ACT BUSY #")
-
+# ==============================================================================
+# 7. RUN BOT
+# ==============================================================================
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 if TOKEN:
     bot.run(TOKEN)
+else:
+    print("Error: DISCORD_BOT_TOKEN environment variable is missing.")
