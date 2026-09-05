@@ -25,12 +25,18 @@ intents = discord.Intents.default()
 intents.presences = True
 intents.members = True
 intents.guilds = True
+intents.message_content = True  # Required for command reading
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name}")
+
+# Ping command to test responsiveness
+@bot.command()
+async def ping(ctx):
+    await ctx.send("Pong! The bot is online and working.")
 
 @bot.event
 async def on_presence_update(before, after):
