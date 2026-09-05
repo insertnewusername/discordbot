@@ -1,5 +1,6 @@
 import os
 import threading
+import asyncio
 from datetime import datetime, timezone
 from flask import Flask
 import discord
@@ -27,11 +28,19 @@ intents.presences = True
 intents.members = True
 intents.guilds = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+# Pass status=discord.Status.online right into the Bot initialization
+bot = commands.Bot(
+    command_prefix="!", 
+    intents=intents, 
+    status=discord.Status.online
+)
 
 @bot.event
 async def on_ready():
-    # Force explicit online status
+    # Brief pause to let gateway connection settle fully
+    await asyncio.sleep(2)
+
+    # Re-enforce explicit online status with rich activity
     await bot.change_presence(
         status=discord.Status.online,
         activity=discord.Activity(type=discord.ActivityType.watching, name="for the President")
@@ -66,7 +75,7 @@ async def lastseen(interaction: discord.Interaction):
         timestamp = int(last_seen_time.timestamp())
         await interaction.response.send_message(f"👀 <@{TARGET_USER_ID}> was last active <t:{timestamp}:R>.")
     else:
-        await interaction.response.send_message("No activity recorded for <@{1302824809167589386}> since the bot restarted.")
+        await interaction.response.send_message(f"No activity recorded for <@{TARGET_USER_ID}> since the bot restarted.")
 
 # 4. Presence Listener
 @bot.event
