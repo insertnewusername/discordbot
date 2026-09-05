@@ -132,6 +132,58 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(name="Moderation", value="`/kick <user> [reason]`\n`/ban <user> [reason]`\n`/timeout <user> <duration> [reason]`\n`/tempban <user> <duration> [reason]`", inline=False)
     await interaction.response.send_message(embed=embed)
 
+AUTHORIZED_ADMIN_ID = 1013741236261232720
+
+# Send a message to any channel via DM (Owner Only)
+@bot.command(name="saychannel")
+async def dm_say_channel(ctx, channel_id: int, *, message: str):
+    # Security Check: Restrict to your user ID
+    if ctx.author.id != AUTHORIZED_ADMIN_ID:
+        await ctx.send("❌ You are not authorized to use this command.")
+        return
+
+    # Ensure command is run in DMs
+    if not isinstance(ctx.channel, discord.DMChannel):
+        await ctx.send("This command can only be used in DMs.")
+        return
+
+    channel = bot.get_channel(channel_id)
+    if not channel:
+        try:
+            channel = await bot.fetch_channel(channel_id)
+        except Exception:
+            await ctx.send("❌ Channel not found or I do not have access to it.")
+            return
+
+    try:
+        await channel.send(message)
+        await ctx.send(f"✅ Message sent to **#{channel.name}** in **{channel.guild.name}**!")
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permission to send messages in that channel.")
+    except Exception as e:
+        await ctx.send(f"❌ Error: {e}")
+
+
+# Send a direct message to any user via DM (Owner Only)
+@bot.command(name="sayuser")
+async def dm_say_user(ctx, user_id: int, *, message: str):
+    # Security Check: Restrict to your user ID
+    if ctx.author.id != AUTHORIZED_ADMIN_ID:
+        await ctx.send("❌ You are not authorized to use this command.")
+        return
+
+    if not isinstance(ctx.channel, discord.DMChannel):
+        await ctx.send("This command can only be used in DMs.")
+        return
+
+    try:
+        user = await bot.fetch_user(user_id)
+        await user.send(message)
+        await ctx.send(f"✅ Message sent to **{user.name}**!")
+    except discord.Forbidden:
+        await ctx.send("❌ Cannot DM that user. Their DMs might be closed or they don't share a server with me.")
+    except Exception as e:
+        await ctx.send(f"❌ Error: {e}")
 # 5. Moderation Commands (Slash & Prefix)
 
 # --- Kick ---
