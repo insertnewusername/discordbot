@@ -61,6 +61,10 @@ async def ping(interaction: discord.Interaction):
     latency = round(bot.latency * 1000)
     await interaction.response.send_message(f"Pong! 🏓 The bot is live! ({latency}ms)")
 
+@bot.tree.command(name="summon", description="Summon the President")
+async def wake(interaction: discord.Interaction):
+    await interaction.response.send_message(f"🚨 <@{TARGET_USER_ID}> You have been summoned!")
+
 @bot.tree.command(name="lastseen", description="Check when the target user was last seen")
 async def lastseen(interaction: discord.Interaction):
     global last_seen_time
