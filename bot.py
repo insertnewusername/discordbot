@@ -1,5 +1,6 @@
 import os
 import threading
+from datetime import datetime, timezone
 from flask import Flask
 import discord
 from discord.ext import commands
@@ -19,6 +20,7 @@ threading.Thread(target=run_flask, daemon=True).start()
 
 # 2. Discord Bot Setup
 TARGET_USER_ID = 1302824809167589386
+last_seen_time = None  # Tracks when the target user went offline/online
 
 intents = discord.Intents.default()
 intents.presences = True
@@ -29,7 +31,13 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
-    # Sync slash commands with Discord when bot logs in
+    # Force explicit online status
+    await bot.change_presence(
+        status=discord.Status.online,
+        activity=discord.Activity(type=discord.ActivityType.watching, name="for the President")
+    )
+
+    # Sync slash commands with Discord
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} slash command(s).")
@@ -38,20 +46,42 @@ async def on_ready():
         
     print(f"Logged in as {bot.user.name}")
 
-# 3. Slash Command (/ping)
+# 3. Slash Commands
 @bot.tree.command(name="ping", description="Check if the bot is online")
 async def ping(interaction: discord.Interaction):
     latency = round(bot.latency * 1000)
     await interaction.response.send_message(f"Pong! 🏓 The bot is live! ({latency}ms)")
 
+@bot.tree.command(name="lastseen", description="Check when the target user was last seen")
+async def lastseen(interaction: discord.Interaction):
+    global last_seen_time
+    
+    # Try fetching the user in the current guild to check live status
+    member = interaction.guild.get_member(TARGET_USER_ID) if interaction.guild else None
+    
+    if member and member.status != discord.Status.offline:
+        await interaction.response.send_message(f"👑 <@{TARGET_USER_ID}> is currently **online**!")
+    elif last_seen_time:
+        # Convert to Discord relative timestamp (<t:TIMESTAMP:R>)
+        timestamp = int(last_seen_time.timestamp())
+        await interaction.response.send_message(f"👀 <@{TARGET_USER_ID}> was last active <t:{timestamp}:R>.")
+    else:
+        await interaction.response.send_message("No activity recorded for <@{1302824809167589386}> since the bot restarted.")
+
 # 4. Presence Listener
 @bot.event
 async def on_presence_update(before, after):
+    global last_seen_time
+
     if after.id != TARGET_USER_ID:
         return
 
     prev_status = str(before.status) if before else "offline"
     curr_status = str(after.status)
+
+    # Update last seen timestamp whenever presence changes
+    if curr_status != "offline":
+        last_seen_time = datetime.now(timezone.utc)
 
     if prev_status == "offline" and curr_status != "offline":
         for guild in bot.guilds:
